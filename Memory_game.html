@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Memory Card Game</title>
+<style>
+:root{--bg:#1e1b4b;--panel:#312e81;--text:#f5f3ff;--accent:#f59e0b;--back:#6366f1;--front:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center;padding:20px 12px}
+h1{margin:0 0 4px;font-size:1.8rem}
+p.sub{margin:0 0 16px;opacity:.75}
+.bar{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;align-items:center;margin-bottom:14px;max-width:620px}
+.stat{background:var(--panel);padding:8px 14px;border-radius:10px;font-weight:600}
+select,button{font:inherit;padding:8px 14px;border-radius:10px;border:0;cursor:pointer}
+button.btn{background:var(--accent);color:#1e1b4b;font-weight:700}
+select{background:var(--panel);color:var(--text)}
+#map{display:none;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;width:100%;max-width:520px}
+#map.show{display:grid}
+.lv{background:var(--panel);color:var(--text);font-weight:700;padding:8px 4px;line-height:1.3;border:3px solid transparent}
+.lv small{display:block;font-weight:400;opacity:.9}
+.lv.cur{border-color:var(--accent)}
+.lv:disabled{opacity:.4;cursor:not-allowed}
+.board{display:grid;gap:10px;width:100%;max-width:520px}
+.card{aspect-ratio:1;perspective:600px;cursor:pointer;border:0;background:none;padding:0}
+.inner{position:relative;width:100%;height:100%;transition:transform .45s;transform-style:preserve-3d}
+.card.flipped .inner,.card.matched .inner{transform:rotateY(180deg)}
+.face{position:absolute;inset:0;border-radius:14px;display:flex;align-items:center;justify-content:center;backface-visibility:hidden;font-size:clamp(1.4rem,7vw,2.8rem)}
+.back{background:linear-gradient(135deg,var(--back),#8b5cf6);color:#fff;font-size:1.6rem}
+.front{background:var(--front);transform:rotateY(180deg)}
+.card.matched .front{background:#bbf7d0;animation:pop .4s}
+@keyframes pop{50%{transform:rotateY(180deg) scale(1.12)}}
+#score2{display:none;gap:10px;margin-bottom:14px}
+#score2.show{display:flex}
+.pl{background:var(--panel);padding:8px 18px;border-radius:10px;font-weight:700;border:3px solid transparent;transition:.2s}
+.pl.active{border-color:var(--accent);transform:scale(1.07)}
+#win{display:none;margin-top:18px;background:var(--panel);padding:16px 22px;border-radius:14px;text-align:center;font-weight:600}
+#win.show{display:block}
+#win .acts{margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+#confetti{position:fixed;inset:0;pointer-events:none;width:100%;height:100%}
+</style>
+</head>
+<body>
+<h1>🧠 Memory Card Game</h1>
+<p class="sub">Flip cards and match pairs for fun!</p>
+<div class="bar">
+  <select id="mode">
+    <option value="levels">🏆 Levels</option>
+    <option value="1">1 Player (Free)</option>
+    <option value="2">2 Players</option>
+  </select>
+  <select id="theme">
+    <option value="fun">🎉 Fun</option>
+    <option value="animals">🐶 Animals</option>
+    <option value="flags">🏳️ Flags</option>
+    <option value="tech">💻 Tech</option>
+  </select>
+  <select id="size">
+    <option value="6">Easy (4×3)</option>
+    <option value="8" selected>Medium (4×4)</option>
+    <option value="12">Hard (6×4)</option>
+  </select>
+  <button class="btn" id="mute" title="Toggle sound">🔊</button>
+  <button class="btn" id="restart">Restart</button>
+</div>
+<div id="map"></div>
+<div class="bar" id="stats1">
+  <span class="stat" id="lvlStat">Level 1</span>
+  <span class="stat">Moves: <span id="moves">0</span><span id="limit"></span></span>
+  <span class="stat">Time: <span id="time">0</span>s</span>
+  <span class="stat" id="bestStat">Best: <span id="best">–</span></span>
+</div>
+<div id="score2">
+  <div class="pl" id="p0">Player 1: <span id="s0">0</span></div>
+  <div class="pl" id="p1">Player 2: <span id="s1">0</span></div>
+</div>
+<div class="board" id="board"></div>
+<div id="win"></div>
+<canvas id="confetti"></canvas>
+
+<script>
+const THEMES={
+  fun:["🍎","🐶","🚀","🎸","🌈","🍕","⚽","🐱","🌻","🎲","🍩","🦄"],
+  animals:["🐶","🐱","🦁","🐘","🐼","🦊","🐸","🐵","🐯","🐧","🦒","🐢"],
+  flags:["🇮🇳","🇺🇸","🇬🇧","🇯🇵","🇫🇷","🇩🇪","🇧🇷","🇨🇦","🇦🇺","🇮🇹","🇪🇸","🇰🇷"],
+  tech:["💻","📱","🖥️","⌨️","🖱️","🎮","🔌","💾","📡","🤖","🛰️","🔋"]
+};
+/* p = pairs, cols = grid columns, lim = move limit (fail if exceeded) */
+const LEVELS=[
+  {p:3,cols:3,lim:12},{p:4,cols:4,lim:14},{p:6,cols:4,lim:18},{p:8,cols:4,lim:22},
+  {p:10,cols:5,lim:26},{p:12,cols:6,lim:30},{p:12,cols:6,lim:26},{p:12,cols:6,lim:22}
+];
+const $=id=>document.getElementById(id);
+const board=$("board"),movesEl=$("moves"),timeEl=$("time"),bestEl=$("best"),winEl=$("win");
+let first=null,lock=false,moves=0,matched=0,pairs=8,seconds=0,timer=null;
+let mode="levels",players=1,current=0,scores=[0,0],muted=false,lvl=0,limit=0;
+let progress={u:0,s:[]};   // u = highest unlocked level index, s = stars per level
+
+/* ---------- Sound ---------- */
+let ac=null;
+function tone(freq,dur,type="sine",delay=0,vol=.15){
+  if(muted)return;
+  try{
+    ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime+delay;
+    o.type=type;o.frequency.value=freq;
+    g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+dur);
+    o.connect(g);g.connect(ac.destination);o.start(t);o.stop(t+dur);
+  }catch(e){}
+}
+const sfx={
+  flip:()=>tone(520,.08,"triangle"),
+  match:()=>{tone(660,.12);tone(880,.18,"sine",.1)},
+  miss:()=>tone(220,.2,"sawtooth",0,.08),
+  win:()=>[523,659,784,1047].forEach((f,i)=>tone(f,.25,"triangle",i*.15)),
+  lose:()=>[392,330,262].forEach((f,i)=>tone(f,.25,"square",i*.18,.07))
+};
+
+/* ---------- Confetti ---------- */
+const cv=$("confetti"),cx=cv.getContext("2d");let parts=[],raf=null;
+function sizeCv(){cv.width=innerWidth;cv.height=innerHeight}
+addEventListener("resize",sizeCv);sizeCv();
+function confetti(){
+  const colors=["#f59e0b","#ef4444","#22c55e","#3b82f6","#a855f7","#ec4899"];
+  parts=Array.from({length:160},()=>({
+    x:Math.random()*cv.width,y:-20-Math.random()*cv.height*.5,
+    w:6+Math.random()*6,h:8+Math.random()*8,vy:2+Math.random()*4,
+    vx:-2+Math.random()*4,r:Math.random()*6,vr:-.2+Math.random()*.4,
+    c:colors[Math.floor(Math.random()*colors.length)]}));
+  cancelAnimationFrame(raf);
+  const end=Date.now()+4500;
+  (function loop(){
+    cx.clearRect(0,0,cv.width,cv.height);
+    parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.r+=p.vr;
+      cx.save();cx.translate(p.x,p.y);cx.rotate(p.r);cx.fillStyle=p.c;cx.fillRect(-p.w/2,-p.h/2,p.w,p.h);cx.restore()});
+    if(Date.now()<end)raf=requestAnimationFrame(loop);else cx.clearRect(0,0,cv.width,cv.height);
+  })();
+}
+
+/* ---------- Storage ---------- */
+function loadProgress(){try{const d=JSON.parse(localStorage.getItem("memory-progress"));if(d&&typeof d.u==="number")progress=d}catch(e){}}
+function saveProgress(){try{localStorage.setItem("memory-progress",JSON.stringify(progress))}catch(e){}}
+const bestKey=()=>"memory-best-"+pairs;
+function loadBest(){try{return localStorage.getItem(bestKey())}catch(e){return null}}
+function saveBest(v){try{localStorage.setItem(bestKey(),v)}catch(e){}}
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+
+/* ---------- Level map ---------- */
+function renderMap(){
+  const m=$("map");m.innerHTML="";
+  LEVELS.forEach((L,i)=>{
+    const b=document.createElement("button");
+    const st=progress.s[i]||0;
+    b.className="lv"+(i===lvl?" cur":"");
+    b.disabled=i>progress.u;
+    b.innerHTML="Level "+(i+1)+"<small>"+(i>progress.u?"🔒":(st?"⭐".repeat(st):"☆☆☆"))+"</small>";
+    b.addEventListener("click",()=>{lvl=i;start()});
+    m.appendChild(b);
+  });
+}
+function stars(){
+  if(moves<=pairs*1.5)return 3;
+  if(moves<=pairs*2)return 2;
+  return 1;
+}
+
+/* ---------- Game ---------- */
+function updateTurn(){
+  $("p0").classList.toggle("active",current===0);
+  $("p1").classList.toggle("active",current===1);
+  $("s0").textContent=scores[0];$("s1").textContent=scores[1];
+}
+function showResult(msg,actions){
+  winEl.innerHTML="";
+  const t=document.createElement("div");t.textContent=msg;winEl.appendChild(t);
+  if(actions&&actions.length){
+    const d=document.createElement("div");d.className="acts";
+    actions.forEach(a=>{const b=document.createElement("button");b.className="btn";b.textContent=a.label;b.addEventListener("click",a.fn);d.appendChild(b)});
+    winEl.appendChild(d);
+  }
+  winEl.className="show";
+}
+function start(){
+  clearInterval(timer);timer=null;
+  mode=$("mode").value;players=mode==="2"?2:1;
+  const isLv=mode==="levels";
+  if(isLv){const L=LEVELS[lvl];pairs=L.p;limit=L.lim}
+  else{pairs=parseInt($("size").value);limit=0}
+  first=null;lock=false;moves=0;matched=0;seconds=0;current=0;scores=[0,0];
+  movesEl.textContent=0;timeEl.textContent=0;
+  $("limit").textContent=isLv?" / "+limit:"";
+  winEl.className="";winEl.innerHTML="";
+  $("size").style.display=isLv?"none":"";
+  $("map").className=isLv?"show":"";
+  $("lvlStat").style.display=isLv?"":"none";
+  $("bestStat").style.display=isLv||players===2?"none":"";
+  $("lvlStat").textContent="Level "+(lvl+1);
+  $("stats1").style.display=players===1?"flex":"none";
+  $("score2").className=players===2?"show":"";
+  updateTurn();
+  if(isLv)renderMap();
+  const b=loadBest();bestEl.textContent=b?b+" moves":"–";
+  const cols=isLv?LEVELS[lvl].cols:(pairs===12?6:4);
+  board.style.gridTemplateColumns="repeat("+cols+",1fr)";
+  board.innerHTML="";
+  const set=THEMES[$("theme").value].slice(0,pairs);
+  shuffle([...set,...set]).forEach(e=>{
+    const c=document.createElement("button");
+    c.className="card";c.dataset.v=e;c.setAttribute("aria-label","Card");
+    c.innerHTML='<div class="inner"><div class="face back">?</div><div class="face front">'+e+'</div></div>';
+    c.addEventListener("click",()=>flip(c));
+    board.appendChild(c);
+  });
+}
+
+function flip(c){
+  if(lock||c===first||c.classList.contains("matched"))return;
+  if(!timer&&players===1)timer=setInterval(()=>{seconds++;timeEl.textContent=seconds},1000);
+  c.classList.add("flipped");sfx.flip();
+  if(!first){first=c;return}
+  moves++;movesEl.textContent=moves;
+  const a=first;
+  if(a.dataset.v===c.dataset.v){
+    a.classList.add("matched");c.classList.add("matched");
+    a.classList.remove("flipped");c.classList.remove("flipped");
+    first=null;matched++;
+    if(players===2){scores[current]++;updateTurn()}
+    setTimeout(sfx.match,250);
+    if(matched===pairs)setTimeout(finish,500);
+  }else{
+    lock=true;
+    const out=mode==="levels"&&moves>=limit;
+    setTimeout(()=>{
+      sfx.miss();
+      a.classList.remove("flipped");c.classList.remove("flipped");first=null;
+      if(out){fail();return}
+      lock=false;
+      if(players===2){current=1-current;updateTurn()}
+    },850);
+  }
+}
+
+function fail(){
+  clearInterval(timer);timer=null;lock=true;sfx.lose();
+  showResult("😢 Out of moves! You used all "+limit+".",[{label:"Retry Level "+(lvl+1),fn:start}]);
+}
+
+function finish(){
+  clearInterval(timer);timer=null;
+  if(mode==="levels"){
+    const st=stars();
+    progress.s[lvl]=Math.max(progress.s[lvl]||0,st);
+    const last=lvl===LEVELS.length-1;
+    if(!last&&progress.u<lvl+1)progress.u=lvl+1;
+    saveProgress();renderMap();
+    const acts=[{label:"Replay",fn:start}];
+    if(!last)acts.push({label:"Next Level ➜",fn:()=>{lvl++;start()}});
+    showResult(last?"👑 You finished ALL levels! "+"⭐".repeat(st)
+      :"🎉 Level "+(lvl+1)+" cleared in "+moves+" moves! "+"⭐".repeat(st),acts);
+  }else if(players===1){
+    const b=parseInt(loadBest());
+    let msg="🎉 You won in "+moves+" moves and "+seconds+"s!";
+    if(!b||moves<b){saveBest(moves);bestEl.textContent=moves+" moves";msg+=" New best!"}
+    showResult(msg);
+  }else if(scores[0]===scores[1]){
+    showResult("🤝 It's a draw! "+scores[0]+" – "+scores[1]);
+  }else{
+    const w=scores[0]>scores[1]?1:2;
+    showResult("🏆 Player "+w+" wins! "+scores[0]+" – "+scores[1]);
+  }
+  sfx.win();confetti();
+}
+
+$("restart").addEventListener("click",start);
+["mode","theme","size"].forEach(id=>$(id).addEventListener("change",start));
+$("mute").addEventListener("click",()=>{muted=!muted;$("mute").textContent=muted?"🔇":"🔊"});
+loadProgress();lvl=Math.min(progress.u,LEVELS.length-1);
+start();
+</script>
+</body>
+</html>
